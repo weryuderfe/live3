@@ -4,6 +4,15 @@ import json
 import time
 from datetime import datetime
 import plotly.graph_objects as go
+
+# Page configuration - MUST be the first Streamlit command
+st.set_page_config(
+    page_title="YouTube Live Stream Manager",
+    page_icon="📺",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
 from streamlit_utils import (
     authenticate_youtube,
     get_stream_health,
@@ -13,16 +22,15 @@ from streamlit_utils import (
     get_live_chat_messages,
     send_chat_message,
 )
-from style_utils import apply_custom_styles, main_page_config
+from style_utils import apply_custom_styles
 from components.stream_setup import render_stream_setup
 from components.stream_monitor import render_stream_monitor
 from components.chat_manager import render_chat_manager
 from components.analytics_dashboard import render_analytics_dashboard
 from constants import RTMP_URL
 
-# Page configuration
+# Apply custom styles
 apply_custom_styles()
-main_page_config("YouTube Live Stream Manager")
 
 # Session state initialization
 if "authenticated" not in st.session_state:
