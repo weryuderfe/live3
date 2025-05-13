@@ -63,7 +63,7 @@ with col1:
                         st.session_state.stream_start_time = datetime.now()
                         st.success("Stream started successfully!")
                         time.sleep(1)
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Failed to start stream. Check your stream key and try again.")
             else:
@@ -77,7 +77,7 @@ with col1:
                     st.session_state.stream_start_time = None
                     st.success("Stream stopped successfully!")
                     time.sleep(1)
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Failed to stop stream.")
 
