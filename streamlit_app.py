@@ -1,145 +1,131 @@
 import streamlit as st
 import time
+import os
+import subprocess
+import threading
 from datetime import datetime
+import streamlit.components.v1 as components
+from constants import RTMP_URL
 
-# Page configuration - MUST be the first Streamlit command
+# Page configuration
 st.set_page_config(
     page_title="YouTube Live Stream Manager",
     page_icon="📺",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    layout="wide"
 )
-
-from streamlit_utils import (
-    get_stream_health,
-    start_stream,
-    stop_stream,
-)
-from style_utils import apply_custom_styles
-from components.stream_setup import render_stream_setup
-from constants import RTMP_URL
-
-# Apply custom styles
-apply_custom_styles()
 
 # Session state initialization
 if "streaming" not in st.session_state:
     st.session_state.streaming = False
-if "stream_start_time" not in st.session_state:
-    st.session_state.stream_start_time = None
-if "stream_key" not in st.session_state:
-    st.session_state.stream_key = ""
-if "stream_health" not in st.session_state:
-    st.session_state.stream_health = {"status": "offline", "health": 0, "viewers": 0}
+if "ffmpeg_thread" not in st.session_state:
+    st.session_state.ffmpeg_thread = None
 
-# Header with YouTube branding
-st.markdown(
-    """
-    <div class="header">
-        <h1>
-            <span style="color: #FF0000;">YouTube</span> Live Stream Manager
-        </h1>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# Header
+st.title("YouTube Live Stream Manager")
 
-# Main content
-render_stream_setup(RTMP_URL)
+# Video upload and stream settings
+video_files = [f for f in os.listdir('.') if f.endswith(('.mp4', '.flv'))]
 
-# Stream control and status
-st.divider()
+st.write("Available Videos:")
+selected_video = st.selectbox("Select video", video_files) if video_files else None
 
-col1, col2, col3 = st.columns([1, 1, 1])
+uploaded_file = st.file_uploader("Or upload new video (mp4/flv)", type=['mp4', 'flv'])
+
+if uploaded_file:
+    # Save uploaded file
+    with open(uploaded_file.name, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success("Video uploaded successfully!")
+    video_path = uploaded_file.name
+elif selected_video:
+    video_path = selected_video
+else:
+    video_path = None
+
+# Stream settings
+stream_key = st.text_input("Stream Key", type="password")
+is_loop = st.checkbox("Enable Loop", value=True)
+is_shorts = st.checkbox("Shorts Mode (720x1280)")
+
+# Log display
+log_placeholder = st.empty()
+logs = []
+
+def log_callback(msg):
+    logs.append(msg)
+    try:
+        log_placeholder.text("\n".join(logs[-20:]))
+    except:
+        print(msg)
+
+def run_ffmpeg(video_path, stream_key, is_shorts, is_loop, log_callback):
+    output_url = f"{RTMP_URL}/{stream_key}"
+    scale = "-vf scale=720:1280" if is_shorts else ""
+    loop = "-stream_loop" if is_loop else "-stream_loop 0"
+    
+    cmd = [
+        "ffmpeg", "-re", loop, "-1", "-i", video_path,
+        "-c:v", "libx264", "-preset", "veryfast", "-b:v", "2500k",
+        "-maxrate", "2500k", "-bufsize", "5000k",
+        "-g", "60", "-keyint_min", "60",
+        "-c:a", "aac", "-b:a", "128k",
+        "-f", "flv"
+    ]
+    
+    if scale:
+        cmd += scale.split()
+    cmd.append(output_url)
+    
+    log_callback(f"Running command: {' '.join(cmd)}")
+    
+    try:
+        process = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT, 
+            text=True
+        )
+        for line in process.stdout:
+            log_callback(line.strip())
+        process.wait()
+    except Exception as e:
+        log_callback(f"Error: {e}")
+    finally:
+        log_callback("Stream ended or stopped.")
+
+# Stream controls
+col1, col2 = st.columns(2)
 
 with col1:
-    if not st.session_state.streaming:
-        if st.button("Start Streaming", type="primary", use_container_width=True):
-            if st.session_state.stream_key:
-                with st.spinner("Starting stream..."):
-                    success = start_stream(st.session_state.stream_key)
-                    if success:
-                        st.session_state.streaming = True
-                        st.session_state.stream_start_time = datetime.now()
-                        st.success("Stream started successfully!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("Failed to start stream. Check your stream key and try again.")
-            else:
-                st.warning("Please enter your stream key first.")
-    else:
-        if st.button("Stop Streaming", type="primary", use_container_width=True):
-            with st.spinner("Stopping stream..."):
-                success = stop_stream()
-                if success:
-                    st.session_state.streaming = False
-                    st.session_state.stream_start_time = None
-                    st.success("Stream stopped successfully!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("Failed to stop stream.")
+    if st.button("Start Streaming", type="primary", use_container_width=True):
+        if not video_path or not stream_key:
+            st.error("Video and stream key are required!")
+        else:
+            st.session_state.streaming = True
+            st.session_state.ffmpeg_thread = threading.Thread(
+                target=run_ffmpeg,
+                args=(video_path, stream_key, is_shorts, is_loop, log_callback),
+                daemon=True
+            )
+            st.session_state.ffmpeg_thread.start()
+            st.success("Stream started!")
 
 with col2:
-    # Stream health indicator
-    if st.session_state.streaming:
-        stream_health = get_stream_health()
-        health_color = "#4CAF50" if stream_health["health"] > 80 else "#FFC107" if stream_health["health"] > 50 else "#F44336"
-        st.markdown(
-            f"""
-            <div style="text-align: center;">
-                <p>Stream Health: <span style="color: {health_color}; font-weight: bold;">{stream_health["status"]}</span></p>
-                <div style="height: 10px; background-color: #e0e0e0; border-radius: 5px;">
-                    <div style="width: {stream_health["health"]}%; height: 100%; background-color: {health_color}; border-radius: 5px;"></div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            """
-            <div style="text-align: center;">
-                <p>Stream Status: <span style="color: gray; font-weight: bold;">Offline</span></p>
-                <div style="height: 10px; background-color: #e0e0e0; border-radius: 5px;"></div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    if st.button("Stop Streaming", type="primary", use_container_width=True):
+        st.session_state.streaming = False
+        os.system("pkill ffmpeg")
+        st.warning("Stream stopped!")
 
-with col3:
-    # Stream duration
-    if st.session_state.streaming and st.session_state.stream_start_time:
-        duration = datetime.now() - st.session_state.stream_start_time
-        hours, remainder = divmod(duration.seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        st.markdown(
-            f"""
-            <div style="text-align: center;">
-                <p>Duration: <span style="font-weight: bold;">{hours:02}:{minutes:02}:{seconds:02}</span></p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            """
-            <div style="text-align: center;">
-                <p>Duration: <span style="color: gray; font-weight: bold;">00:00:00</span></p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+# Display logs
+log_placeholder.text("\n".join(logs[-20:]))
 
-# Footer
-st.markdown(
-    """
-    <div style="text-align: center; margin-top: 30px; color: #9e9e9e; font-size: 12px;">
-        <p>YouTube RTMP Streaming Tool • Built with Streamlit • v0.1.0</p>
-        <p>RTMP URL: rtmp://a.rtmp.youtube.com/live2</p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# Stream status
+if st.session_state.streaming:
+    st.markdown(
+        """
+        <div style='background-color: #FF0000; color: white; padding: 10px; border-radius: 5px; text-align: center;'>
+            🔴 LIVE
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
